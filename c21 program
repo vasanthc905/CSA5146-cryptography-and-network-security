@@ -1,0 +1,131 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+
+void handleErrors(void) {
+    ERR_print_errors_fp(stderr);
+    abort();
+}
+
+int pad(unsigned char *plaintext, int plaintext_len, unsigned char *padded_text, int block_size) {
+    int pad_len = block_size - (plaintext_len % block_size);
+    if (pad_len == 0) pad_len = block_size;
+
+    memcpy(padded_text, plaintext, plaintext_len);
+    memset(padded_text + plaintext_len, 0, pad_len - 1);
+    padded_text[plaintext_len + pad_len - 1] = 0x80;
+
+    return plaintext_len + pad_len;
+}
+
+int unpad(unsigned char *plaintext, int plaintext_len) {
+    int pad_len = 0;
+    while (plaintext_len > 0 && plaintext[plaintext_len - 1] == 0) {
+        pad_len++;
+        plaintext_len--;
+    }
+    if (plaintext_len > 0 && plaintext[plaintext_len - 1] == 0x80) {
+        pad_len++;
+        plaintext_len--;
+    }
+
+    return plaintext_len;
+}
+
+int encrypt(unsigned char *plaintext, int plaintext_len, unsigned char *key, unsigned char *iv, unsigned char *ciphertext, const EVP_CIPHER *cipher_type) {
+    EVP_CIPHER_CTX *ctx;
+
+    int len;
+    int ciphertext_len;
+
+    if (!(ctx = EVP_CIPHER_CTX_new())) handleErrors();
+
+    if (1 != EVP_EncryptInit_ex(ctx, cipher_type, NULL, key, iv)) handleErrors();
+
+    if (1 != EVP_EncryptUpdate(ctx, ciphertext, &len, plaintext, plaintext_len)) handleErrors();
+    ciphertext_len = len;
+
+    if (1 != EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) handleErrors();
+    ciphertext_len += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+
+    return ciphertext_len;
+}
+
+int decrypt(unsigned char *ciphertext, int ciphertext_len, unsigned char *key, unsigned char *iv, unsigned char *plaintext, const EVP_CIPHER *cipher_type) {
+    EVP_CIPHER_CTX *ctx;
+
+    int len;
+    int plaintext_len;
+
+    if (!(ctx = EVP_CIPHER_CTX_new())) handleErrors();
+
+    if (1 != EVP_DecryptInit_ex(ctx, cipher_type, NULL, key, iv)) handleErrors();
+
+    if (1 != EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len)) handleErrors();
+    plaintext_len = len;
+
+    if (1 != EVP_DecryptFinal_ex(ctx, plaintext + len, &len)) handleErrors();
+    plaintext_len += len;
+
+    EVP_CIPHER_CTX_free(ctx);
+
+    return plaintext_len;
+}
+
+void print_hex(unsigned char *data, int len) {
+    for (int i = 0; i < len; i++) {
+        printf("%02x", data[i]);
+    }
+    printf("\n");
+}
+
+int main() {
+    unsigned char *plaintext = (unsigned char *)"This is a test message!";
+    unsigned char *key = (unsigned char *)"0123456789abcdef";
+    unsigned char iv[EVP_MAX_IV_LENGTH];
+    RAND_bytes(iv, sizeof(iv));
+
+    int block_size = 16;
+    unsigned char padded_text[128];
+    unsigned char ciphertext[128];
+    unsigned char decryptedtext[128];
+
+    int padded_len = pad(plaintext, strlen((char *)plaintext), padded_text, block_size);
+
+    printf("Plaintext:\n%s\n", plaintext);
+    printf("Padded Plaintext:\n");
+    print_hex(padded_text, padded_len);
+
+    int ciphertext_len = encrypt(padded_text, padded_len, key, iv, ciphertext, EVP_aes_128_ecb());
+    printf("Ciphertext (ECB):\n");
+    print_hex(ciphertext, ciphertext_len);
+
+    int decrypted_len = decrypt(ciphertext, ciphertext_len, key, iv, decryptedtext, EVP_aes_128_ecb());
+    decrypted_len = unpad(decryptedtext, decrypted_len);
+    decryptedtext[decrypted_len] = '\0';
+    printf("Decrypted Text (ECB):\n%s\n", decryptedtext);
+
+    ciphertext_len = encrypt(padded_text, padded_len, key, iv, ciphertext, EVP_aes_128_cbc());
+    printf("Ciphertext (CBC):\n");
+    print_hex(ciphertext, ciphertext_len);
+
+    decrypted_len = decrypt(ciphertext, ciphertext_len, key, iv, decryptedtext, EVP_aes_128_cbc());
+    decrypted_len = unpad(decryptedtext, decrypted_len);
+    decryptedtext[decrypted_len] = '\0';
+    printf("Decrypted Text (CBC):\n%s\n", decryptedtext);
+
+    ciphertext_len = encrypt(padded_text, padded_len, key, iv, ciphertext, EVP_aes_128_cfb());
+    printf("Ciphertext (CFB):\n");
+    print_hex(ciphertext, ciphertext_len);
+
+    decrypted_len = decrypt(ciphertext, ciphertext_len, key, iv, decryptedtext, EVP_aes_128_cfb());
+    decrypted_len = unpad(decryptedtext, decrypted_len);
+    decryptedtext[decrypted_len] = '\0';
+    printf("Decrypted Text (CFB):\n%s\n", decryptedtext);
+
+    return 0;
+}
